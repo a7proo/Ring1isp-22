@@ -231,7 +231,7 @@ class Osnova:
 # Пример использования:
 if __name__ == "__main__":
 
-    token = "7965493672:AAFSFYz6jFT5c2TQ7UCUikMKRwiqmSa3Vqc"
+    token = ""
 
     bot = Osnova(token)
 
