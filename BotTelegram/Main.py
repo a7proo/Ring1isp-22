@@ -5,12 +5,16 @@ import random
 from pyexpat.errors import messages
 from telebot import types
 
-class RSP:
+class adstract:
     def __init__(self, bot, osnova):
         self.bot = bot
         self.osnova = osnova
 
         self.bot.callback_query_handler(func=lambda call: True)(self.osnova.handle_callback)
+
+
+
+class RSP(adstract):
 
     def CalData_RSP(self, call):
         self.bot.answer_callback_query(call.id, text="Вы выбрали игру Камень, ножницы, бумага!")
@@ -74,12 +78,7 @@ class RSP:
 
 
 
-class Roulettee:
-    def __init__(self, bot, osnova):
-        self.bot = bot
-        self.osnova = osnova
-
-        self.bot.callback_query_handler(func=lambda call: True)(self.osnova.handle_callback)
+class Roulettee(adstract):
 
     def CalData_Roulette(self, call):
         self.bot.answer_callback_query(call.id, text="Вы выбрали игру Рулетка!")
@@ -97,7 +96,7 @@ class Roulettee:
         markupRoulette.add(types.InlineKeyboardButton('Назад', callback_data='Back'))
 
         if Result[0] == Result[1] == Result[2]:
-            self.osnova.Money += 50
+            self.osnova.Money += 150
             result_message += f"\nПоздравляем! Вы выиграли 50 Рублей. Ваш баланс: {self.osnova.Money}"
         else:
             self.osnova.Money -= 10
@@ -106,10 +105,7 @@ class Roulettee:
         self.bot.send_message(call.message.chat.id, result_message, reply_markup=markupRoulette)
 
 
-class Balanse:
-    def __init__(self, bot, osnova):
-        self.bot = bot
-        self.osnova = osnova
+class Balanse(adstract):
 
     def ShowBalans(self, call):
         markupBalans = types.InlineKeyboardMarkup()
@@ -118,13 +114,7 @@ class Balanse:
         self.bot.send_message(call.message.chat.id, f"Баланс: {self.osnova.Money}₽", reply_markup=markupBalans)
 
 
-class Dise_Game:
-    def __init__(self, bot, osnova):
-        self.bot = bot
-        self.osnova = osnova
-
-        self.bot.callback_query_handler(func=lambda call: True)(self.osnova.handle_callback)
-
+class Dise_Game(adstract):
 
     def CalData_Dice(self, call):
         self.bot.answer_callback_query(call.id, text="Вы выбрали игру Кости!")
