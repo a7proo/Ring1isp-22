@@ -1,15 +1,18 @@
 import time
+from abc import ABC, abstractmethod
+
 import telebot
 import random
 
 from pyexpat.errors import messages
 from telebot import types
 
-class adstract:
+
+class adstract(ABC):
+    @abstractmethod
     def __init__(self, bot, osnova):
         self.bot = bot
         self.osnova = osnova
-
         self.bot.callback_query_handler(func=lambda call: True)(self.osnova.handle_callback)
 
 
@@ -147,7 +150,6 @@ class Dise_Game(adstract):
 class Osnova:
     def __init__(self, token):
         self.Money = 100
-
         self.bot = telebot.TeleBot(token)
         self.dice_game = Dise_Game(self.bot, self)
         self.balance = Balanse(self.bot, self)
