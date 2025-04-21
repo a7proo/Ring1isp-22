@@ -8,13 +8,16 @@ from telebot import types
 
 
 class CustomError(Exception):
-    pass
+    def __str__(self):
+        print("Карявая ошибка")
 
 class BalanceError(CustomError):
-    pass
+    def __str__(self):
+        print("Баланс потеряли!!!")
 
 class GameError(CustomError):
-    pass
+    def __str__(self):
+        print("Всё игры накрылись.")
 
 class ads(ABC):
 
@@ -340,3 +343,20 @@ if __name__ == "__main__":
     bot = Osnova(token)
 
     bot.start_polling()
+
+
+
+    class Cell:
+        def __init__(self, value):
+            self.value = value
+
+        def __repr__(self):
+            return f"Cell({self.value})"
+
+    rows = 3
+    cols = 4
+
+    grid = [[Cell((i, j)) for j in range(cols)] for i in range(rows)]
+
+    for row in grid:
+        print(row)
