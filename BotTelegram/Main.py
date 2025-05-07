@@ -1,362 +1,358 @@
 import time
 from abc import ABC, abstractmethod
-
 import telebot
 import random
-from pyexpat.errors import messages
+import logging
+from logging.handlers import RotatingFileHandler
+from datetime import datetime
 from telebot import types
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        RotatingFileHandler(
+            'bot.log',
+            maxBytes=1024*1024,
+            backupCount=5,
+            encoding='utf-8'
+        ),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 
 class CustomError(Exception):
     def __str__(self):
-        print("Карявая ошибка")
+        return "Карявая ошибка"
+
 
 class BalanceError(CustomError):
     def __str__(self):
-        print("Баланс потеряли!!!")
+        return "Баланс потеряли!!!"
+
 
 class GameError(CustomError):
     def __str__(self):
-        print("Всё игры накрылись.")
+        return "Всё игры накрылись."
 
-class ads(ABC):
 
+
+class GameBase(ABC):
     def __init__(self, bot, osnova):
         self.bot = bot
         self.osnova = osnova
-        self._protected_attr = "Меня защитили"
-        self.bot.callback_query_handler(func=lambda call: True)(self.osnova.handle_callback)
+        self._protected_attr = "Защищенный атрибут"
+        logger.info(f"Создан объект игры {self.__class__.__name__}")
 
     def get_protected_attr(self):
         return self._protected_attr
 
+    @abstractmethod
+    def start_game(self, call):
+        """Абстрактный метод для запуска игры"""
+        pass
 
-class RSP(ads):
-    try:
-        def __init__(self, bot, osnova):
-            super().__init__(bot, osnova)
-            self.protected_attr = self.get_protected_attr()
+    @abstractmethod
+    def process_choice(self, call):
+        """Абстрактный метод для обработки выбора"""
+        pass
 
-        def CalData_RSP(self, call):
+
+
+class DiceGame(GameBase):
+    def __init__(self, bot, osnova):
+        super().__init__(bot, osnova)
+        self.game_name = "Кости"
+        self.internal_name = "Dice"
+        logger.info(f"Инициализирована игра {self.game_name}")
+
+    def start_game(self, call):
+        try:
+            logger.info(f"Запуск {self.game_name} для {call.message.chat.id}")
+            self.bot.answer_callback_query(call.id, text=f"Вы выбрали игру {self.game_name}!")
+            self.bot.send_message(call.message.chat.id, f"🎲 Давайте сыграем в {self.game_name} 🎲")
+            time.sleep(1)
+            self.process_choice(call)
+        except Exception as e:
+            logger.error(f"Ошибка при запуске {self.game_name}: {e}")
+            raise GameError(f"Ошибка при запуске {self.game_name}: {e}")
+
+    def process_choice(self, call):
+        try:
+            roll_dice = lambda: random.randint(1, 6)
+
+            player_roll = roll_dice()
+            bot_roll = roll_dice()
+
+            logger.info(f"Кости: игрок {player_roll} vs бот {bot_roll} (user: {call.message.chat.id})")
+
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton('Кинуть снова', callback_data='RestartDice'))
+            markup.add(types.InlineKeyboardButton('Назад', callback_data='Back'))
+
+            user_id = call.message.chat.id
+            current_balance = self.osnova.get_user_balance(user_id)
+
+            get_result = lambda pr, br: (
+                "win" if pr > br else
+                "lose" if pr < br else
+                "draw"
+            )
+
+            result = get_result(player_roll, bot_roll)
+
+            if result == "win":
+                new_balance = current_balance + 10
+                self.osnova.set_user_balance(user_id, new_balance)
+                message = f"Вы: {player_roll} 🎲 Бот: {bot_roll}\nВы выиграли 10₽! Баланс: {new_balance}₽"
+            elif result == "lose":
+                new_balance = current_balance - 10
+                self.osnova.set_user_balance(user_id, new_balance)
+                message = f"Вы: {player_roll} 🎲 Бот: {bot_roll}\nВы проиграли 10₽! Баланс: {new_balance}₽"
+            else:
+                message = f"Вы: {player_roll} 🎲 Бот: {bot_roll}\nНичья! Баланс не изменился: {current_balance}₽"
+
+            self.bot.send_message(call.message.chat.id, message, reply_markup=markup)
+
+        except BalanceError as e:
+            logger.error(f"Ошибка баланса в {self.game_name}: {e}")
+        except Exception as e:
+            logger.error(f"Ошибка в {self.game_name}: {e}")
+            raise GameError(f"Ошибка в {self.game_name}: {e}")
+
+class RSPGame(GameBase):
+    def __init__(self, bot, osnova):
+        super().__init__(bot, osnova)
+        self.game_name = "Камень-Ножницы-Бумага"
+        self.internal_name = "RSP"
+        self.choices = {
+            'Stone': '🗿',
+            'Paper': '📃',
+            'Scissors': '✂'
+        }
+        logger.info(f"Инициализирована игра Камень-Ножницы-Бумага")
+
+    def start_game(self, call):
+        try:
+            logger.info(f"Запуск игры Камень-Ножницы-Бумага для {call.message.chat.id}")
             self.bot.answer_callback_query(call.id, text="Вы выбрали игру Камень, ножницы, бумага!")
             self.bot.send_message(call.message.chat.id, "✂📃🗿Давайте сыграем в Камень, ножницы, бумага🗿📃✂")
-            print(f"Я достал его: {self.protected_attr}")
             time.sleep(1)
-            self.Start_RSP(call)
+            self._show_choices(call)
+        except Exception as e:
+            logger.error(f"Ошибка при запуске игры: {e}")
+            raise GameError(f"Ошибка при запуске игры: {e}")
 
-    except Exception as e:
-        raise GameError(f"Ошибка при запуске игры Камень, ножницы, бумага: {e}")
+    def _show_choices(self, call):
+        markup = types.InlineKeyboardMarkup()
+        for choice, emoji in self.choices.items():
+            markup.add(types.InlineKeyboardButton(emoji, callback_data=choice))
+        self.bot.send_message(call.message.chat.id, "Сделайте выбор:", reply_markup=markup)
 
-    finally:
-        print("Выполнение игры Камень, ножницы, бумага завершено.")
-
-    def Start_RSP(self, call):
-        markupRSP = types.InlineKeyboardMarkup()
-        markupRSP.add(types.InlineKeyboardButton('🗿', callback_data='Stone'))
-        markupRSP.add(types.InlineKeyboardButton('📃', callback_data='Paper'))
-        markupRSP.add(types.InlineKeyboardButton('✂', callback_data='Scissors'))
-
-        self.bot.send_message(call.message.chat.id, "Сделайте выбор:", reply_markup=markupRSP)
-
-    def Start_Scissors(self, call):
+    def process_choice(self, call):
         try:
-            WinLose = random.randint(0, 1)
-            markupRSP2 = types.InlineKeyboardMarkup()
-            markupRSP2.add(types.InlineKeyboardButton('Кинуть снова', callback_data='RestartRSP'))
-            markupRSP2.add(types.InlineKeyboardButton('Назад', callback_data='Back'))
+            user_choice = call.data
+            bot_choice = random.choice(list(self.choices.keys()))
+
+            logger.info(f"Пользователь {call.message.chat.id} выбрал {user_choice}, бот выбрал {bot_choice}")
+
+            determine_winner = lambda uc, bc: (
+                "win" if (uc == 'Stone' and bc == 'Scissors') or
+                         (uc == 'Scissors' and bc == 'Paper') or
+                         (uc == 'Paper' and bc == 'Stone')
+                else "lose" if uc != bc else "draw"
+            )
+
+            result = determine_winner(user_choice, bot_choice)
+
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton('Кинуть снова', callback_data='RestartRSP'))
+            markup.add(types.InlineKeyboardButton('Назад', callback_data='Back'))
 
             user_id = call.message.chat.id
+            current_balance = self.osnova.get_user_balance(user_id)
 
-            if WinLose == 0:
-                current_balance = self.osnova.get_user_balance(user_id)  # Получаем баланс пользователя
-                self.osnova.set_user_balance(user_id, current_balance + 10)  # Обновляем баланс
-                self.bot.send_message(call.message.chat.id, "Вы: ✂ Ведущий: 📃")
-                self.bot.send_message(call.message.chat.id, f"Вы выйграли 10 Рублей Баланс: {current_balance + 10}₽",
-                                  reply_markup=markupRSP2)
+            if result == "win":
+                new_balance = current_balance + 10
+                self.osnova.set_user_balance(user_id, new_balance)
+                message = f"Вы: {self.choices[user_choice]} Бот: {self.choices[bot_choice]}\nВы выиграли 10₽! Баланс: {new_balance}₽"
+            elif result == "lose":
+                new_balance = current_balance - 10
+                self.osnova.set_user_balance(user_id, new_balance)
+                message = f"Вы: {self.choices[user_choice]} Бот: {self.choices[bot_choice]}\nВы проиграли 10₽! Баланс: {new_balance}₽"
             else:
-                current_balance = self.osnova.get_user_balance(user_id)  # Получаем баланс пользователя
-                self.osnova.set_user_balance(user_id, current_balance - 10)  # Обновляем баланс
-                self.bot.send_message(call.message.chat.id, "Вы: ✂ Ведущий: 🗿")
-                self.bot.send_message(call.message.chat.id, f"Вы проиграли 10 Рублей Баланс: {current_balance - 10}₽",
-                                  reply_markup=markupRSP2)
+                message = f"Вы: {self.choices[user_choice]} Бот: {self.choices[bot_choice]}\nНичья! Баланс не изменился: {current_balance}₽"
+
+            self.bot.send_message(call.message.chat.id, message, reply_markup=markup)
+
         except BalanceError as e:
-            print(f"Ошибка баланса {e}")
-
+            logger.error(f"Ошибка баланса: {e}")
         except Exception as e:
-            raise GameError(f"Ошибка в игре Камень, ножницы, бумага: {e}")
-        finally:
-            print("Завершение игры Камень, ножницы, бумага.")
+            logger.error(f"Ошибка в игре: {e}")
+            raise GameError(f"Ошибка в игре: {e}")
 
-    def Start_Paper(self, call):
+
+class RouletteGame(GameBase):
+    def __init__(self, bot, osnova):
+        super().__init__(bot, osnova)
+        self.game_name = "Рулетка"
+        self.internal_name = "Roulette"
+        self.symbols = ["🍒", "🍓", "🍆", "💯"]
+        logger.info(f"Инициализирована игра Рулетка")
+
+    def start_game(self, call):
         try:
-            WinLose = random.randint(0, 1)
-            markupRSP2 = types.InlineKeyboardMarkup()
-            markupRSP2.add(types.InlineKeyboardButton('Кинуть снова', callback_data='RestartRSP'))
-            markupRSP2.add(types.InlineKeyboardButton('Назад', callback_data='Back'))
-
-            user_id = call.message.chat.id
-
-            if WinLose == 0:
-                current_balance = self.osnova.get_user_balance(user_id)  # Получаем баланс пользователя
-                self.osnova.set_user_balance(user_id, current_balance + 10)
-                self.bot.send_message(call.message.chat.id, "Вы: 📃 Ведущий: 🗿")
-                self.bot.send_message(call.message.chat.id, f"Вы выйграли 10 Рублей Баланс: {current_balance + 10}₽",
-                                  reply_markup=markupRSP2)
-            else:
-                current_balance = self.osnova.get_user_balance(user_id)  # Получаем баланс пользователя
-                self.osnova.set_user_balance(user_id, current_balance + 10)
-                self.bot.send_message(call.message.chat.id, "Вы: 📃 Ведущий: ✂")
-                self.bot.send_message(call.message.chat.id, f"Вы проиграли 10 Рублей Баланс: {current_balance - 10}₽",
-                                  reply_markup=markupRSP2)
-        except BalanceError as e:
-            print(f"Ошибка баланса {e}")
-
-        except Exception as e:
-            raise GameError(f"Ошибка в игре Камень, ножницы, бумага: {e}")
-        finally:
-            print("Завершение игры Камень, ножницы, бумага.")
-
-    def Start_Stone(self, call):
-        try:
-            WinLose = random.randint(0, 1)
-            markupRSP2 = types.InlineKeyboardMarkup()
-            markupRSP2.add(types.InlineKeyboardButton('Кинуть снова', callback_data='RestartRSP'))
-            markupRSP2.add(types.InlineKeyboardButton('Назад', callback_data='Back'))
-
-            user_id = call.message.chat.id
-
-            if WinLose == 0:
-                current_balance = self.osnova.get_user_balance(user_id)  # Получаем баланс пользователя
-                self.osnova.set_user_balance(user_id, current_balance + 10)
-                self.bot.send_message(call.message.chat.id, "Вы: 🗿 Ведущий: ✂")
-                self.bot.send_message(call.message.chat.id, f"Вы выйграли 10 Рублей Баланс: {current_balance + 10}₽",
-                                      reply_markup=markupRSP2)
-            else:
-                current_balance = self.osnova.get_user_balance(user_id)  # Получаем баланс пользователя
-                self.osnova.set_user_balance(user_id, current_balance - 10)
-                self.bot.send_message(call.message.chat.id, "Вы: 🗿 Ведущий: 📃")
-                self.bot.send_message(call.message.chat.id, f"Вы проиграли 10 Рублей Баланс: {current_balance - 10}₽",
-                                      reply_markup=markupRSP2)
-        except BalanceError as e:
-            print(f"Ошибка баланса {e}")
-
-        except Exception as e:
-            raise GameError(f"Ошибка в игре Камень, ножницы, бумага: {e}")
-        finally:
-            print("Завершение игры Камень, ножницы, бумага.")
-
-
-class Roulettee(ads):
-    try:
-        def CalData_Roulette(self, call):
+            logger.info(f"Запуск рулетки для {call.message.chat.id}")
             self.bot.answer_callback_query(call.id, text="Вы выбрали игру Рулетка!")
             self.bot.send_message(call.message.chat.id, "🎰Давайте сыграем в Рулетку🎰")
             time.sleep(1)
-            self.Start_Roulette(call)
-            testMass = [[1, 2, 3],
-                        [4, 5, 42],
-                        [7, 8, 9]
-                                ]
-            print(testMass[1][2])
-    except Exception as e:
-        raise GameError(f"Ошибка при запуске игры руетка: {e}")
+            self.process_choice(call)
+        except Exception as e:
+            logger.error(f"Ошибка при запуске рулетки: {e}")
+            raise GameError(f"Ошибка при запуске рулетки: {e}")
 
-    finally:
-        print("Выполнение игры Рулетка.")
-
-    def Start_Roulette(self, call):
+    def process_choice(self, call):
         try:
-            Rulet_Mas = ["🍒", "🍓", "🍆", "💯"]
+            spin = lambda: [random.choice(self.symbols) for _ in range(3)]
+            result = spin()
+            result_message = " | ".join(result)
 
-            Result = [random.choice(Rulet_Mas) for _ in range(3)]
-            result_message = " | ".join(Result)
+            logger.info(f"Рулетка для {call.message.chat.id}: {result_message}")
 
             user_id = call.message.chat.id
+            current_balance = self.osnova.get_user_balance(user_id)
 
-            markupRoulette = types.InlineKeyboardMarkup()
-            markupRoulette.add(types.InlineKeyboardButton('Кинуть снова', callback_data='RestartRoulette'))
-            markupRoulette.add(types.InlineKeyboardButton('Назад', callback_data='Back'))
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton('Кинуть снова', callback_data='RestartRoulette'))
+            markup.add(types.InlineKeyboardButton('Назад', callback_data='Back'))
 
-            if Result[0] == Result[1] == Result[2]:
-                current_balance = self.osnova.get_user_balance(user_id)  # Получаем баланс пользователя
-                self.osnova.set_user_balance(user_id, current_balance + 150)
+            is_jackpot = lambda res: res[0] == res[1] == res[2]
+
+            if is_jackpot(result):
+                new_balance = current_balance + 150
+                self.osnova.set_user_balance(user_id, new_balance)
                 self.bot.send_message(call.message.chat.id, "Поздравляем! Вы выиграли 150 Рублей.")
             else:
-                current_balance = self.osnova.get_user_balance(user_id)  # Получаем баланс пользователя
-                self.osnova.set_user_balance(user_id, current_balance - 10)
+                new_balance = current_balance - 10
+                self.osnova.set_user_balance(user_id, new_balance)
                 self.bot.send_message(call.message.chat.id, "Вы проиграли 10 Рублей.")
+
             time.sleep(1)
-            self.bot.send_message(call.message.chat.id, result_message, reply_markup=markupRoulette)
+            self.bot.send_message(call.message.chat.id, result_message, reply_markup=markup)
+
         except BalanceError as e:
-            print(f"Ошибка баланса {e}")
-
+            logger.error(f"Ошибка баланса: {e}")
         except Exception as e:
-            raise GameError(f"Ошибка в игре Рулетка: {e}")
-        finally:
-            print("Завершение игры Рулетка")
-
-
-class Balanse(ads):
-    try:
-        def ShowBalans(self, call):
-            markupBalans = types.InlineKeyboardMarkup()
-            markupBalans.add(types.InlineKeyboardButton('Назад', callback_data='Back'))
-
-            user_id = call.message.chat.id
-
-            current_balance = self.osnova.get_user_balance(user_id)  # Получаем баланс пользователя
-            self.bot.send_message(call.message.chat.id, f"Баланс: {current_balance}₽", reply_markup=markupBalans)
-    except BalanceError as e:
-        print(f"Ошибка баланса {e}")
-    finally:
-        print("Завершение проверки балнса.")
-
-
-class Dise_Game(ads):
-    try:
-        def CalData_Dice(self, call):
-            self.bot.answer_callback_query(call.id, text="Вы выбрали игру Кости!")
-            self.bot.send_message(call.message.chat.id, "🎲Давайте сыграем в кости🎲")
-            time.sleep(1)
-            self.Start_Dice(call)
-    except Exception as e:
-        raise GameError(f"Ошибка при запуске игры Кости: {e}")
-
-    finally:
-        print("Выполнение игры Кости.")
-
-    def Start_Dice(self, call):
-        try:
-            dice_Player = random.randint(1, 6)
-            dice_Host = random.randint(1, 6)
-            self.bot.send_message(call.message.chat.id, f"Вы:{dice_Player}, Хозяин стола:{dice_Host}")
-
-            markupDice = types.InlineKeyboardMarkup()
-            markupDice.add(types.InlineKeyboardButton('Кинуть снова', callback_data='Restart'))
-            markupDice.add(types.InlineKeyboardButton('Назад', callback_data='Back'))
-
-            user_id = call.message.chat.id
-
-            if dice_Player > dice_Host:
-                time.sleep(1)
-                current_balance = self.osnova.get_user_balance(user_id)
-                self.osnova.set_user_balance(user_id, current_balance + 10)
-                self.bot.send_message(call.message.chat.id, f"Ура! Вы выйграли 10 Рублей. Баланс: {current_balance + 10}₽",
-                                      reply_markup=markupDice)
-
-            else:
-                time.sleep(1)
-                current_balance = self.osnova.get_user_balance(user_id)
-                self.osnova.set_user_balance(user_id, current_balance - 10)
-                self.bot.send_message(call.message.chat.id,f"Увы, вы проиграли 10 Рублей.Баланс: {current_balance - 10}₽",
-                                      reply_markup=markupDice)
-        except BalanceError as e:
-            print(f"Ошибка баланса {e}")
-
-        except Exception as e:
-            raise GameError(f"Ошибка в игре Кости: {e}")
-        finally:
-            print("Завершение игры Кости.")
-
+            logger.error(f"Ошибка в рулетке: {e}")
+            raise GameError(f"Ошибка в рулетке: {e}")
 
 
 class Osnova:
     def __init__(self, token):
         self.user_balances = {}
         self.bot = telebot.TeleBot(token)
-        self.dice_game = Dise_Game(self.bot, self)
-        self.balance = Balanse(self.bot, self)
-        self.roulete = Roulettee(self.bot, self)
-        self.rsp = RSP(self.bot, self)
 
-        self.bot.message_handler(commands=['start'])(self.First_message)
+
+        self.games = [
+            DiceGame(self.bot, self),
+            RSPGame(self.bot, self),
+            RouletteGame(self.bot, self)
+        ]
+
+
+        self.get_game_buttons = lambda: [
+            (game.game_name, game.internal_name) for game in self.games
+        ]
+        self.get_game_names = lambda: list(self.games.keys())
+        self.get_game_stats = lambda: {name: game.get_protected_attr() for name, game in self.games.items()}
+
+        self.bot.message_handler(commands=['start'])(self.first_message)
         self.bot.callback_query_handler(func=lambda call: True)(self.handle_callback)
 
+        logger.info("Бот инициализирован")
+
     def get_user_balance(self, user_id):
-        """Возвращает баланс пользователя, если он есть, иначе 100 по умолчанию"""
-        return self.user_balances.get(user_id, 100)  # Баланс по умолчанию 100
+        balance = self.user_balances.get(user_id, 100)
+        logger.debug(f"Баланс пользователя {user_id}: {balance}₽")
+        return balance
 
     def set_user_balance(self, user_id, amount):
-        """Устанавливает новый баланс для пользователя"""
         self.user_balances[user_id] = amount
+        logger.debug(f"Установлен баланс {user_id}: {amount}₽")
 
-    def First_message(self, message):
-        file = "./man.png"
+    def first_message(self, message):
+        try:
+            file = "./man.png"
 
+            markup = types.InlineKeyboardMarkup()
+            for game_name, callback_data in self.get_game_buttons():
+                markup.add(types.InlineKeyboardButton(game_name, callback_data=callback_data))
+            markup.add(types.InlineKeyboardButton('Баланс', callback_data='Balance'))
 
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton('Кости', callback_data='Dice'))
-        markup.add(types.InlineKeyboardButton('Баланс', callback_data='Balance'))
-        markup.add(types.InlineKeyboardButton('Рулетка', callback_data='Roulette'))
-        markup.add(types.InlineKeyboardButton('Камень, ножницы, бумага', callback_data='RSP'))  # Rock, scissors, paper
+            with open(file, 'rb') as photo:
+                self.bot.send_photo(
+                    message.chat.id,
+                    photo,
+                    caption="Добро пожаловать! Выберите игру:",
+                    reply_markup=markup
+                )
 
-        with open(file, 'rb') as photo:
-            self.bot.send_photo(message.chat.id, photo,
-                                caption="Добро пожаловать дорогой гость, Чем желаете заняться?",
-                                reply_markup=markup)
-
-    def osnoMessage(self, call):
-        self.bot.delete_message(call.message.chat.id, call.message.message_id)
-
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton('Кости', callback_data='Dice'))
-        markup.add(types.InlineKeyboardButton('Баланс', callback_data='Balance'))
-        markup.add(types.InlineKeyboardButton('Рулетка', callback_data='Roulette'))
-        markup.add(types.InlineKeyboardButton('Камень, ножницы, бумага', callback_data='RSP'))  # Rock, scissors, paper
-
-        self.bot.send_message(call.message.chat.id, "Что дальше?", reply_markup=markup)
+            logger.info(f"Показано стартовое сообщение для {message.chat.id}")
+        except Exception as e:
+            logger.error(f"Ошибка в стартовом сообщении: {e}")
 
     def handle_callback(self, call):
-        """Обрабатывает данные из callback_data и передает в класс Dise_Game"""
-        if call.data == 'Dice':
-            self.dice_game.CalData_Dice(call)
-        elif call.data == 'Back':
-            self.osnoMessage(call)
-        elif call.data == 'Restart':
-            self.dice_game.Start_Dice(call)
-        elif call.data == 'Balance':
-            self.balance.ShowBalans(call)
-        elif call.data == 'Roulette':
-            self.roulete.CalData_Roulette(call)
-        elif call.data == 'RestartRoulette':
-            self.roulete.Start_Roulette(call)
-        elif call.data == 'RSP':
-            self.rsp.CalData_RSP(call)
-        elif call.data == 'RestartRSP':
-            self.rsp.Start_RSP(call)
-        elif call.data == 'Scissors':
-            self.rsp.Start_Scissors(call)
-        elif call.data == 'Paper':
-            self.rsp.Start_Paper(call)
-        elif call.data == 'Stone':
-            self.rsp.Start_Stone(call)
+        try:
+            logger.info(f"Обработка callback от {call.message.chat.id}: {call.data}")
+
+            if call.data == 'Back':
+                self.show_main_menu(call)
+            elif call.data == 'Balance':
+                self.show_balance(call)
+            else:
+                for game in self.games:
+                    if call.data == game.internal_name:
+                        game.start_game(call)
+                        break
+                    elif call.data in ['Stone', 'Paper', 'Scissors']:
+                        next(g for g in self.games if g.internal_name == 'RSP').process_choice(call)
+                        break
+                    elif call.data.startswith('Restart'):
+                        game_name = call.data.replace('Restart', '')
+                        next(g for g in self.games if g.internal_name == game_name).process_choice(call)
+                        break
+        except Exception as e:
+            logger.error(f"Ошибка обработки callback: {e}")
+            self.bot.send_message(call.message.chat.id, "Произошла ошибка. Пожалуйста, попробуйте позже.")
+
+    def show_main_menu(self, call):
+        self.bot.delete_message(call.message.chat.id, call.message.message_id)
+        self.first_message(call.message)
+        logger.info(f"Показано главное меню для {call.message.chat.id}")
+
+    def show_balance(self, call):
+        user_id = call.message.chat.id
+        current_balance = self.get_user_balance(user_id)
+
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton('Назад', callback_data='Back'))
+
+        self.bot.send_message(
+            call.message.chat.id,
+            f"Ваш баланс: {current_balance}₽",
+            reply_markup=markup
+        )
+        logger.info(f"Показан баланс для {user_id}")
 
     def start_polling(self):
+        logger.info("Бот запущен и ожидает сообщений")
         self.bot.polling(none_stop=True)
 
 
-
-# Пример использования:
 if __name__ == "__main__":
-    token = ""
-
+    token = "7965493672:AAFSFYz6jFT5c2TQ7UCUikMKRwiqmSa3Vqc"
     bot = Osnova(token)
-
     bot.start_polling()
-
-
-
-    class Cell:
-        def __init__(self, value):
-            self.value = value
-
-        def __repr__(self):
-            return f"Cell({self.value})"
-
-    rows = 3
-    cols = 4
-
-    grid = [[Cell((i, j)) for j in range(cols)] for i in range(rows)]
-
-    for row in grid:
-        print(row)
