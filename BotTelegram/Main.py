@@ -6,6 +6,9 @@ import logging
 from logging.handlers import RotatingFileHandler
 from datetime import datetime
 from telebot import types
+import multiprocessing
+import tkinter as tk
+from threading import Thread
 
 
 logging.basicConfig(
@@ -103,6 +106,7 @@ class DiceGame(GameBase):
             )
 
             result = get_result(player_roll, bot_roll)
+            self.osnova.update_user_stats(user_id, result)
 
             if result == "win":
                 new_balance = current_balance + 10
@@ -167,6 +171,8 @@ class RSPGame(GameBase):
             )
 
             result = determine_winner(user_choice, bot_choice)
+            user_id = call.message.chat.id
+            self.osnova.update_user_stats(user_id, result)
 
             markup = types.InlineKeyboardMarkup()
             markup.add(types.InlineKeyboardButton('Кинуть снова', callback_data='RestartRSP'))
@@ -230,6 +236,8 @@ class RouletteGame(GameBase):
             markup.add(types.InlineKeyboardButton('Назад', callback_data='Back'))
 
             is_jackpot = lambda res: res[0] == res[1] == res[2]
+            result = "win" if is_jackpot(result) else "lose"
+            self.osnova.update_user_stats(user_id, result)
 
             if is_jackpot(result):
                 new_balance = current_balance + 150
@@ -250,9 +258,140 @@ class RouletteGame(GameBase):
             raise GameError(f"Ошибка в рулетке: {e}")
 
 
+class StatsWindow:
+    def __init__(self, osnova):
+        self.osnova = osnova
+        self.setup_ui()
+
+    def setup_ui(self):
+        self.root = tk.Tk()
+        self.root.title("Статистика игроков")
+        self.root.geometry("500x500")
+        self.root.configure(bg='#f0f0f0')
+
+
+        main_frame = tk.Frame(self.root, bg='#f0f0f0', padx=10, pady=10)
+        main_frame.pack(fill='both', expand=True)
+
+        header = tk.Label(
+            main_frame,
+            text="Статистика игроков",
+            font=('Arial', 14, 'bold'),
+            bg='#f0f0f0',
+            fg='#333333'
+        )
+        header.pack(pady=(0, 10))
+
+        canvas = tk.Canvas(main_frame, bg='#f0f0f0', highlightthickness=0)
+        scrollbar = tk.Scrollbar(main_frame, orient='vertical', command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg='#f0f0f0')
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        btn_refresh = tk.Button(
+            main_frame,
+            text="Обновить",
+            command=self.update_stats,
+            bg='#2FBA3B',
+            fg='white',
+            font=('Arial', 10, 'bold'),
+            relief='flat'
+        )
+        btn_refresh.pack(pady=10)
+
+        self.scrollable_frame = scrollable_frame
+        self.update_stats()
+
+    def create_player_card(self, user_id, stats):
+        card = tk.Frame(
+            self.scrollable_frame,
+            bg='white',
+            padx=10,
+            pady=8,
+            relief='groove',
+            bd=1
+        )
+
+        tk.Label(
+            card,
+            text=f"Игрок {user_id}",
+            font=('Arial', 11, 'bold'),
+            bg='white',
+            fg='#333333'
+        ).pack(anchor='w')
+
+
+        tk.Label(
+            card,
+            text=f"Побед: {stats.get('wins', 0)}",
+            font=('Arial', 10, 'bold'),
+            bg='white',
+            fg='#009E0D'
+        ).pack(anchor='w')
+
+        tk.Label(
+            card,
+            text=f"Поражений: {stats.get('losses', 0)}",
+            font=('Arial', 10),
+            bg='white',
+            fg='#B81919'
+        ).pack(anchor='w')
+
+        tk.Label(
+            card,
+            text=f"Ничьих: {stats.get('draws', 0)}",
+            font=('Arial', 10),
+            bg='white',
+            fg='#B81919'
+        ).pack(anchor='w')
+
+        return card
+
+    def update_stats(self):
+
+        for widget in self.scrollable_frame.winfo_children():
+            widget.destroy()
+
+
+        sorted_players = sorted(
+            self.osnova.user_stats.items(),
+            key=lambda x: x[1].get('wins', 0),
+            reverse=True
+        )
+
+
+        for user_id, stats in sorted_players:
+            card = self.create_player_card(user_id, stats)
+            card.pack(fill='x', pady=5, ipadx=5, ipady=5)
+
+
+        tk.Label(
+            self.scrollable_frame,
+            text=f"Всего игроков: {len(self.osnova.user_stats)}",
+            font=('Arial', 10, 'bold'),
+            bg='#f0f0f0'
+        ).pack(pady=10)
+
 class Osnova:
     def __init__(self, token):
         self.user_balances = {}
+        self.user_stats = {}
+        self.stats_window = StatsWindow(self)
+
+        self.root = tk.Tk()
+        self.root.withdraw()
+
+
+        self.stats_window.root.deiconify()
+
         self.bot = telebot.TeleBot(token)
 
 
@@ -274,6 +413,7 @@ class Osnova:
 
         logger.info("Бот инициализирован")
 
+
     def get_user_balance(self, user_id):
         balance = self.user_balances.get(user_id, 100)
         logger.debug(f"Баланс пользователя {user_id}: {balance}₽")
@@ -282,6 +422,17 @@ class Osnova:
     def set_user_balance(self, user_id, amount):
         self.user_balances[user_id] = amount
         logger.debug(f"Установлен баланс {user_id}: {amount}₽")
+
+    def update_user_stats(self, user_id, result):
+        if user_id not in self.user_stats:
+            self.user_stats[user_id] = {'wins': 0, 'losses': 0, 'draws': 0}
+
+        if result == "win":
+            self.user_stats[user_id]['wins'] += 1
+        elif result == "lose":
+            self.user_stats[user_id]['losses'] += 1
+        else:
+            self.user_stats[user_id]['draws'] += 1
 
     def first_message(self, message):
         try:
@@ -352,7 +503,23 @@ class Osnova:
         self.bot.polling(none_stop=True)
 
 
+from multiprocessing import Process
+
 if __name__ == "__main__":
     token = ""
+
+
     bot = Osnova(token)
-    bot.start_polling()
+
+
+
+    def run_bot():
+        bot.start_polling()
+
+
+
+    bot_thread = Thread(target=run_bot, daemon=True)
+    bot_thread.start()
+
+
+    bot.stats_window.root.mainloop()
